@@ -1,7 +1,17 @@
 
 # Prof Tallman
 # Helper library and demo code for working with 8x8 LED Matrix
-
+#
+# Followed directions at https://luma-led-matrix.readthedocs.io/en/latest/install.html
+# to learn how to configure Raspberry Pi and install the proper modules.
+#   $ lsmod | grep -i spi     (no spi devices shown)
+#   $ sudo raspi-config       (enabled automatic loading of SPI interface)
+#   $ sudo reboot now
+#   $ lsmod | grep -i spi     (spi_bcm2835)
+#   $ ls -l /dev/spi*         (/dev/spidev0.0 & /dev/spidev0.1)
+#   $ sudo usermod -a -G spi,gpio joshua
+#   $ sudo python3 -m pip install luma.led_matrix
+#
 # Looked at luma.core.legacy.show_message source to understand font format
 # Idea to use a string to create a simple bitmap thanks to dji_matrix module
 # for DJI Tello Talent Drones (but modified to use nicer string interface)
