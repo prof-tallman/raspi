@@ -12,6 +12,13 @@
 #   $ sudo usermod -a -G spi,gpio joshua
 #   $ sudo python3 -m pip install luma.led_matrix
 #
+# The pins must be connected as follows for the Luma library:
+#   VCC - Pin #2 (or any +5V source)
+#   GND - Pin #6 (or any other ground)
+#   DIN - Pin #19 which is GPIO 10 (MOSI)
+#   CS  - Pin #24 which is GPIO 8 (SPI CE0)
+#   CLK - Pin #23 which is GPIO 11 (SPI CLK)
+#
 # Looked at luma.core.legacy.show_message source to understand font format
 # Idea to use a string to create a simple bitmap thanks to dji_matrix module
 # for DJI Tello Talent Drones (but modified to use nicer string interface)
