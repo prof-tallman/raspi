@@ -94,6 +94,10 @@ class LCD1602:
         self._d7 = d7_pin
         self._init_device()
 
+    def __del__(self):
+        ''' Object destructor cleans up GPIO pins on the Raspberry Pi. '''
+        GPIO.cleanup()
+
     def _init_device(self):
         '''
         Low-level initialization routine that configures the LCD1602 to work
@@ -209,8 +213,8 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print(" User quit with <CTRL+C>")
+        print(f" User quit with <CTRL+C>")
     except Exception as e:
         print(f"ERROR: {e}")
     finally:
-        GPIO.cleanup()        
+        print(f"Program completed successfully")
