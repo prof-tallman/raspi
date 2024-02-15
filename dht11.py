@@ -259,8 +259,8 @@ _DHT_PIN = 26
 def main():
     ''' Test program to demonstrate the DHT11 object '''
     dht = DHT11(_DHT_PIN)
-    print(f'{dht.temperature_c}{DHT11.DEG_SYMBOL}C / ' +
-          f'{dht.temperature_f}{DHT11.DEG_SYMBOL}F')
+    print(f'{dht.temperature_c:.2f}{DHT11.DEG_SYMBOL}C / ' +
+          f'{dht.temperature_f:.2f}{DHT11.DEG_SYMBOL}F')
     print(f'{dht.humidity}%')
 
 if __name__ == '__main__':
