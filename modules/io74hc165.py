@@ -14,7 +14,7 @@
 import RPi.GPIO as GPIO
 from time import sleep, time
 
-_DEFAULT_WAIT_TIME = 0.00001
+_IC_DELAY_TIME_SECONDS = 0.00001
 
 class IO74HC165:
     ''' Reads 8 parallel inputs serially through a 3 pin connection. '''
@@ -43,28 +43,29 @@ class IO74HC165:
         GPIO.cleanup()
         return
     
+    @property
     def read(self):
         ''' Reads 8 parallel inputs as an 8-element binary list. '''
         data = [ 0, 0, 0, 0, 0, 0, 0, 0 ]
 
         # Latch the parallel inputs
         GPIO.output(self._shift_pin, GPIO.LOW)
-        sleep(_DEFAULT_WAIT_TIME)
+        sleep(_IC_DELAY_TIME_SECONDS)
         GPIO.output(self._shift_pin, GPIO.HIGH)
 
         # Read the serial output 1 bit at a time
         for i in range(8):
             GPIO.output(self._clock_pin, GPIO.LOW)
-            sleep(_DEFAULT_WAIT_TIME)
+            sleep(_IC_DELAY_TIME_SECONDS)
             data[i] = GPIO.input(self._data_pin)
             GPIO.output(self._clock_pin, GPIO.HIGH)
-            sleep(_DEFAULT_WAIT_TIME)
+            sleep(_IC_DELAY_TIME_SECONDS)
 
         return data
     
+    @property
     def read_byte(self):
         ''' Reads 8 parallel inputs as a single byte value. '''
-
         data = 0
         for bit in self.read():
             data = (data << 1) | bit
@@ -72,9 +73,9 @@ class IO74HC165:
 
 
 def main():
-    obj = IO74HC165(20, 21, 16)
-    print(obj.read())
-    print(obj.read_byte())
+    device = IO74HC165(20, 21, 16)
+    print(device.read)
+    print(device.read_byte)
 
 if __name__ == '__main__':
     main()
