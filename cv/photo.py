@@ -1,3 +1,5 @@
+# sudo apt install -y python3-libcamera
+# sudo apt install -y python3-picamera2
 # sudo apt install -y python3-matplotlib
 # sudo apt install -y python3-numpy
 # sudo apt install -y python3-pandas
