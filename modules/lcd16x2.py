@@ -1,6 +1,6 @@
 
 # Prof Tallman
-# Helper class and demo code for working with the LCD1602 device from Elegoo.
+# Helper class for working with the LCD1602 device from Elegoo.
 #
 # https://michaelriedl.com/2022/08/06/rpi-virtualenv.html
 # Thanks to Michael Riedl's blog for help with the Python Virtual Environment
@@ -93,17 +93,25 @@ class LCD1602:
         self._d6 = d6_pin
         self._d7 = d7_pin
         self._init_device()
+        return
+
 
     def __del__(self):
         ''' Object destructor cleans up GPIO pins on the Raspberry Pi. '''
         GPIO.cleanup()
+        return
+    
+
+    def __str__(self):
+        return (f"LCD1602 device on GPIO pins {self._rs} (RS), {self._en} (EN)," +
+                f" and {self._d4}:{self._d5}:{self._d6}:{self._d7} for data")
+
 
     def _init_device(self):
         '''
         Low-level initialization routine that configures the LCD1602 to work
         in 4-bit, 2-line, 5x8 font, L-to-R mode and clears the display.
         '''
-        # Configure the Raspberry Pi pins
         GPIO.setup(self._en, GPIO.OUT)
         GPIO.setup(self._rs, GPIO.OUT)
         GPIO.setup(self._d4, GPIO.OUT)
@@ -117,7 +125,7 @@ class LCD1602:
         self._send_command(LCD1602._LCD_FUNC_RETURN_HOME |
                            LCD1602._LCD_FUNC_CLEAR_DISPLAY)
         self._send_command(LCD1602._LCD_FUNC_RETURN_HOME)
-        
+
         # Set to 4-bit mode with cursor off, L -> R text
         self._send_command(LCD1602._LCD_FUNC_SET_FUNCTION |
                     LCD1602._LCD_OPTION_4BIT |
@@ -131,11 +139,14 @@ class LCD1602:
                     LCD1602._LCD_OPTION_L_TO_R |
                     LCD1602._LCD_OPTION_NO_SHIFT)
         self._send_command(LCD1602._LCD_FUNC_CLEAR_DISPLAY)
+        return
+
 
     def _send_command(self, command):
         ''' Sends an 8-bit control command to the LCD1602. '''
         self._send_byte(command, LCD1602._LCD_CMD_MODE)
         sleep(LCD1602._LCD_SETUP_TIME)
+
 
     def _send_byte(self, data_byte, mode):
         '''
@@ -160,6 +171,8 @@ class LCD1602:
         GPIO.output(self._d5, data_byte & 0x02 > 0)
         GPIO.output(self._d4, data_byte & 0x01 > 0)
         self._latch_nibble()
+        return
+
 
     def _latch_nibble(self):
         ''' Writes the current nibble to the LCD1602 device. '''
@@ -168,12 +181,16 @@ class LCD1602:
         sleep(LCD1602._LCD_PULSE_TIME)
         GPIO.output(self._en, False)
         sleep(LCD1602._LCD_PULSE_TIME)
+        return
 
-    def clear_display(self):
+
+    def clear(self):
         ''' Clears all the text from the LCD1602 device. '''
         self._send_command(LCD1602._LCD_FUNC_CLEAR_DISPLAY)
+        return
+    
 
-    def send_string(self, string, line=1):
+    def text(self, string, line=1):
         ''' 
         Displays a string on the LCD1602 device.
         Args:
@@ -189,6 +206,8 @@ class LCD1602:
         string = string[:LCD1602._LCD_WIDTH].ljust(LCD1602._LCD_WIDTH, ' ')
         for ch in string:
             self._send_byte(ord(ch), LCD1602._LCD_DATA_MODE)
+        return
+
 
 ###############################################################################
 
@@ -205,8 +224,8 @@ def main():
     hostname = socket.gethostname()
     username = getpass.getuser()
     while(True):
-        lcd.send_string(f"{username}@{hostname}", 1)
-        lcd.send_string(f"{datetime.now():%a %b %d %H:%m}", 2)
+        lcd.text(f"{username}@{hostname}", 1)
+        lcd.text(f"{datetime.now():%a %b %d %H:%m}", 2)
         sleep(5)
 
 if __name__ == '__main__':

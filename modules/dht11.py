@@ -1,6 +1,6 @@
 
 # Prof Tallman
-# Helper class and demo for the DHT11 temperature and humidity sensor.
+# Helper class for the DHT11 temperature and humidity sensor.
 #
 # Designed after consulting the Arduino DHT sensor library v1.4.6 source code
 # in C++ and referencing the AM2302 DHT22 datasheet. Borrowed some ideas from
@@ -9,60 +9,80 @@
 # "The Most Complete" starter kit.
 #
 # https://www.arduino.cc/reference/en/libraries/dht-sensor-library/
-# https://cdn-shop.adafruit.com/datasheets/Digital%20humidity%20and%20temperature%20sensor%20AM2302.pdf
+# https://datasheetspdf.com/datasheet/AM2302.html
 # https://pypi.org/project/dht11/
 
 import statistics as stats
 import RPi.GPIO as GPIO
 from time import sleep, time
 
-
-###############################################################################
-
-
 class DHT11:
-    ''' Reads temperature and humidity data from a DHT11 device. '''
-    DEG_SYMBOL = '°'
-    _DEFAULT_WAIT_SECONDS = 5
+    '''
+    Reads temperature and humidity data from a DHT11 device. This object will
+    cache its readings from the DHT11 device. Frequent queries will not read
+    return a live value every time. Cached values will sometimes be returned
+    instead. The constructor takes a wait period to control the cached value.
+    '''
 
-    def __init__(self, data_pin, wait_seconds=_DEFAULT_WAIT_SECONDS):
+    # The DHT11 device shares a single pin that the host uses to initiate
+    # temperature readings and the device uses to communicate data. Since both
+    # the host and sensor drive the same signal, it's important that we hold
+    # off on the host to avoid a situation where both the host and sensor are
+    # driving opposite values. According to the datasheet, a full read from
+    # the sensor takes 2 seconds, but our code runs a bit slower on purpose, 
+    # so we will wait a full 5 seconds between all read operations.
+    _DEFAULT_CACHE_WAIT_SECONDS = 5
+    DEG_SYMBOL = '°'
+
+    def __init__(self, data_pin, cache_wait_period=_DEFAULT_CACHE_WAIT_SECONDS):
         '''
-        Create and initialize a new DHT11 object.
+        Creates a new DHT11 object.
+        
+        Read data from the sensor using the `temperature_c`, `temperature_f`, 
+        and `humidity` properties. This object caches temperature readings for
+        a short period rather than taking live readings every time that the
+        properties are invoked. Determine how much time has passed since the
+        last live reading with the `seconds_since_last_reading` property.
+
+        If communication with the device fails before reading any valid sensor
+        data, all the properties will return None.
 
         Args:
-         - data_pin: the GPIO pin number connected to the DHT11
-         - wait_seconds: controls how long data is cached before the object
-         makes a new reading from the device
+         - data_pin: The GPIO pin number connected to the DHT11
+         - cache_wait_period: Controls how long data is cached before the
+         class makes a new reading from the device. Set `None` to disable
+         the cache completely and make live reads every time.
         '''
         GPIO.setmode(GPIO.BCM)
-        self._pin = data_pin
-        self._wait_period = wait_seconds
-        self._temperature = None
-        self._humidity = None
-        self._valid_data = False
-        self._read_time = None
+        self._dht11_pin = data_pin
+        self._wait_period_seconds = cache_wait_period
+        self._last_read_time = None
+        self._last_temperature = None
+        self._last_humidity = None
 
-        # To complete a read operation, the device sends 40 bits of serial
-        # data in a row. According to the datasheet, 0s will take 75us and
-        # 1s take 120us (50us LOW setup followed by 25us HIGH signal vs 50us
-        # LOW setup followed by a 70us HIGH signal). After the 40 bits have
-        # been transferred, the device will hold a steady signal. This module
-        # assumes that if 150us have passed without a change in signal that
-        # the transfer is complete.
+        # Calculate how long our code should try to read the DHT11 device
+        # before timing out. The DHT11 timing is very precise; a CPU context
+        # switch might cause us to miss a read operation. This calculation
+        # determines how long to wait before giving up.
         #
-        # But we don't measure the passing of time by actually measuring time.
-        # Instead, we count the number of iteratons through a loop and then
-        # estimate how much time that represents (it's a faster operation
-        # then calling time()). To make the estimate accurate, we need to
-        # measure the length of time for a single GPIO.input operation and
-        # then calculate how many input operations it takes to fill 150us.
+        # The DHT11 device uses a LOW to HIGH signal to transmit serial data.
+        # If the LOW to HIGH signal lasted for 75us it means the device sent
+        # a zero whereas a LOW to HIGH signal that lasts for 120us means that
+        # the device sent a one. Therefore, if our code detects no signal
+        # changes over 150us, it means that our code lost the DHT11 signal.
+        #
+        # We can't detect the passing of 150us with a direct time measurment
+        # because the call to time.sleep() is often slower than 150us on a
+        # Raspberry Pi 4B. Instead, we calculate how many times a tight loop
+        # will iterate in 150us. Then we set this upper bound on the loops
+        # used in all of our read operations.
 
-        hold_period_seconds = 0.000150 # 150us
-        self._gpio_read_time = self._stopwatch_gpio_input_operation()
-        self._wait_cycles = int(hold_period_seconds // self._gpio_read_time)
+        wait_period_seconds = 0.000150 # 150us
+        loop_iteration_time = self._stopwatch_gpio_input_operation()
+        self._wait_cycles = int(wait_period_seconds // loop_iteration_time)
 
         # Take an initial reading
-        self._temperature, self._humidity = self.read_sensor()
+        self._last_temperature, self._last_humidity = self._read_sensor()
         return
 
 
@@ -72,105 +92,104 @@ class DHT11:
         return
 
 
+    def __str__(self):
+        if self.seconds_since_last_reading is None:
+            return f"DHT11 object on GPIO pin {self._dht11_pin} has never been read."
+        else:
+            return (f"DHT11 object on GPIO pin {self._dht11_pin} last reading was" + 
+                    f" {self.seconds_since_last_reading}s ago")
+
+
     @property
     def temperature_c(self):
-        ''' Temperature in Degrees Celcius. '''
-        if not self._read_time or self.last_reading > self._wait_period:
-            self._temperature, self._humidity = self.read_sensor()
-        return self._temperature
+        '''
+        Returns the temperature in Degrees Celcius. If an error occurs while
+        taking a reading and no cached value exists, the function will return
+        `None`.
+        '''
+        if (self._last_read_time is None
+            or self._wait_period_seconds is None
+            or self.seconds_since_last_reading > self._wait_period_seconds):
+                self._read_sensor()
+        return self._last_temperature
+
 
     @property
     def temperature_f(self):
-        ''' Temperature in Degrees Farenheit. '''
+        '''
+        Returns the temperature in Degrees Farenheit. If an error occurs while
+        taking a reading and no cached value exists, the function will return
+        `None`.
+        '''
         return self.temperature_c * 1.8 + 32
+
 
     @property
     def humidity(self):
-        ''' Humidity as a percentage. '''
-        if not self._read_time or self.last_reading > self._wait_period:
-            self._temperature, self._humidity = self.read_sensor()
-        return self._humidity
-    
-    @property
-    def valid_reading(self):
-        ''' Returns whether the temperature and humidity values are valid. '''
-        return self._valid_data
+        '''
+        Returns the humidity as a percentage. If an error occurs while taking
+        a reading and no cached value exists, the function will return `None`.
+        '''
+        if (self._last_read_time is None
+            or self._wait_period_seconds is None
+            or self.seconds_since_last_reading > self._wait_period_seconds):
+                self._read_sensor()
+        return self._last_humidity
+
 
     @property
-    def last_reading(self):
-        ''' Number of seconds since the last true sensor reading. '''
-        if self._read_time:
-            return int(time() - self._read_time)
+    def seconds_since_last_reading(self):
+        '''
+        Returns the number of seconds since the last true sensor reading. If
+        the sensor has never been read, the function will return `None`.
+        '''
+        if self._last_read_time:
+            return int(time() - self._last_read_time)
         else:
             return None
-           
+
 
     def _stopwatch_gpio_input_operation(self):
         '''
-        Measures the length of time to execute a single GPIO read operation.
+        Measures the length of time to execute a single GPIO read operation
+        on the computer that is running this code. This function averages the
+        duration of many GPIO read operations performed in a tight loop.
         '''
-        GPIO.setup(self._pin, GPIO.IN, GPIO.PUD_UP)
+        GPIO.setup(self._dht11_pin, GPIO.IN, GPIO.PUD_UP)
         start_time = time()
         gpio_loop_count = 10000
         for i in range(gpio_loop_count):
-            GPIO.input(self._pin)
+            GPIO.input(self._dht11_pin)
         end_time = time()
         elapsed_time = end_time - start_time
         gpio_read_time = elapsed_time / gpio_loop_count
         return gpio_read_time
 
 
-    def read_sensor(self):
+    def _read_sensor(self):
         '''
         Reads the current temperature and humidity levels from the device.
-        Although this method is exposed publically, it is not meant to be
-        called directly because it circumvents the object's built-in cache.
+        Instead of returning a value, this function sets the object's last
+        temperature and last humidity values.
 
-        Returns a tuple (temperature °C, humidity %)
+        This method is private; it is not meant to be called directly because
+        it circumvents the built-in cache.
         '''
         
-        # Send a read request to the sensor and then parse the response
-        self._request_sensor_data()
-        raw = self._receive_data_stream()
-        if len(raw) < 80:
-            raise EOFError(f"Did not read 80 signals ({len(raw)})")
-        bits = self._convert_raw_to_bits(raw)
-        data = self._bits_to_bytes(bits)
-        checksum = self._calculate_checksum(data)
-        if data[4] != checksum:
-            raise ValueError(f"Calculated checksum '{checksum}' did not " +
-                             f"match given checksum '{data[4]}'")
+        # Send a read request to the DHT11 sensor
+        # The datasheet explains that a HIGH signal is the 'free status'
+        # and to initiate a read, we must pull the signal low for at least
+        # 1-10ms. We pull low for 20ms just to be safe.
 
-        # Convert the received data to humidity and temperature values
-        humidity = data[0] + data[1] * 0.1
-        temperature = data[2] + data[3] * 0.1
-        self._valid_data = True
-        self._read_time = time()
-        return (temperature, humidity)
-
-
-    def _request_sensor_data(self):
-        ''' Signal the DHT11 device that we want a sensor reading. '''
-        # Signal the DHT11 that we want a temperature & humidity reading
-        GPIO.setup(self._pin, GPIO.OUT)
-        GPIO.output(self._pin, GPIO.HIGH)
-        sleep(0.050) 
-        GPIO.output(self._pin, GPIO.LOW)
+        GPIO.setup(self._dht11_pin, GPIO.OUT)
+        GPIO.output(self._dht11_pin, GPIO.HIGH)
+        sleep(0.050) # 'free state' for at least 50ms should be sufficient 
+        GPIO.output(self._dht11_pin, GPIO.LOW)
         sleep(0.020)
-        return
 
-
-    def _receive_data_stream(self):
-        '''
-        Read the DHT11 signal from the GPIO pin.
-        
-        Returns a list of counts that indicate how long the signal stayed
-        high or low. The list alternates between a series of calibration
-        values and the actual low/high signals. Signals that are larger than
-        the calibration values correspond to logical 1s and signals with
-        counts lower than the calibration values reperesent logical 0s.
-        '''
-
+        # Receive the humidity and temperature reading from the DHT11 sensor
+        # If an error occured, return the last valid reading
+        #
         # Reading the datasheet, the information contained in the DHT11 signal
         # is largely time-based. The device will alternate between LOW and
         # HIGH. The LOW periods last for 50us and are markers to separate the
@@ -191,34 +210,78 @@ class DHT11:
         # which represtns a 1. If the HIGH signal iteration count is less than
         # the LOW signal iteration, then it must be a 26-28us signal which
         # represents a 0. Thanks to Zoltan for for the idea.
-
-        GPIO.setup(self._pin, GPIO.IN, GPIO.PUD_UP)        
-        prev = GPIO.input(self._pin)
-        counts = []
-        repeats = 0
-        
+        #
         # Loop until we receive a prolonged signal that does not toggle btw
         # 0/1. Within the loop we cound how many iterations pass until the
         # signal toggles. Once it toggles we store the count and reset our
         # counter. Repeat until reaching that prolonged constant signal.
 
+        GPIO.setup(self._dht11_pin, GPIO.IN, GPIO.PUD_UP)        
+        prev = GPIO.input(self._dht11_pin)
+        raw_signal_counts = []
+        repeats = 0
+        
         while repeats < self._wait_cycles:
-            curr = GPIO.input(self._pin)
+            curr = GPIO.input(self._dht11_pin)
             if curr == prev:
                 repeats += 1
             else:
-                counts.append(repeats)
+                raw_signal_counts.append(repeats)
                 repeats = 0
                 prev = curr
-        return counts
+        
+        # Converts the raw signal counts to a sequence of bits from the form:
+        #   LOW - HIIIIIGH - LOW - HI - LOW - HI - LOW HIIIIGH...
+        # The LOW signals should always stay low for the same length of time
+        # whereas the HIGH signals are either short or long depending on if
+        # the sensor is transmitting a 0 or a 1.
+        #
+        # If the HIGH signal lasted for a longer duration than the LOW signal,
+        # it means the sensor transmitted a 1. Conversly, if the sensor held 
+        # signal HIGH for a shorter duration than the LOW signal, it means the
+        # sensor transmitted a one. HIGH signals always *follow* LOW signals.
+
+        if len(raw_signal_counts) < 80:
+            #raise EOFError(f"Did not read 80 signals ({len(raw)})")
+            return
+
+        odds = raw_signal_counts[-79::2]
+        evens = raw_signal_counts[-80::2]
+        if stats.stdev(odds) > stats.stdev(evens):
+            high_signals = odds
+            low_signal_time = stats.mean(evens)
+        else:
+            high_signals = evens
+            low_signal_time = stats.mean(odds)
+        bits = [1 if value > low_signal_time else 0 for value in high_signals]
+
+        # Verify the integrity of the data we just read using algorithm from
+        # the DHT11 datasheet
+
+        data = self._bits_to_bytes(bits)
+        checksum = (data[0] + data[1] + data[2] + data[3]) & 255
+        if data[4] != checksum:
+            #raise ValueError(f"Calculated checksum '{checksum}' did not " +
+            #                 f"match given checksum '{data[4]}'")
+            return
+
+        # Convert the received data to humidity and temperature values and
+        # store internally within the object
+
+        self._last_humidity = data[0] + data[1] * 0.1
+        self._last_temperature = data[2] + data[3] * 0.1
+        self._last_read_time = time()
+        return
     
 
     def _convert_raw_to_bits(self, raw):
         '''
-        Converts raw signal counts to a sequence of bits.
+        Converts the raw signal counts to a sequence of bits.
         
         Returns a list of bits having either value 0 or 1.
         '''
+
+        # See _read_sensor function for more information
         odds = raw[-79::2]
         evens = raw[-80::2]
         if stats.stdev(odds) > stats.stdev(evens):
@@ -228,11 +291,6 @@ class DHT11:
             signals = evens
             limit = stats.mean(odds)
         return [1 if value > limit else 0 for value in signals]
-
-
-    def _calculate_checksum(self, data):
-        ''' Checksum is the sum of the first four bytes. '''
-        return 255 & (data[0] + data[1] + data[2] + data[3])        
 
 
     def _bits_to_bytes(self, bits):
@@ -250,13 +308,11 @@ class DHT11:
                 byte = 0
         return bytes(result)
 
-
 ###############################################################################
-
 
 _DHT_PIN = 26
 
-def main():
+def demo():
     ''' Test program to demonstrate the DHT11 object '''
     dht = DHT11(_DHT_PIN)
     print(f'{dht.temperature_c:.2f}{DHT11.DEG_SYMBOL}C / ' +
@@ -265,6 +321,6 @@ def main():
 
 if __name__ == '__main__':
     try:
-        main()
+        demo()
     except KeyboardInterrupt:
         print(f" User quit with <CTRL+C>")
